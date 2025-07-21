@@ -1,7 +1,3 @@
-- hostname: appserver1
-  ip: 3.131.159.175
-- hostname: appserver2
-  ip: 18.223.33.239
 - hostname: appserver3
   ip: 18.188.205.11
 - hostname: appserver4
