@@ -1,0 +1,66 @@
+name: Update Monitoring Stack
+
+on:
+  push:
+    paths:
+      - 'apps/**'
+
+jobs:
+  update-monitoring:
+    runs-on: ubuntu-latest
+    environment: TST
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup SSH Key
+        run: |
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > private_key.pem
+          chmod 600 private_key.pem
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml yq netcat-openbsd
+
+      - name: Test SSH connectivity
+        run: nc -zv ${{ secrets.PROMETHEUS_EC2_IP }} 22
+
+      - name: Generate Prometheus Config
+        run: |
+          python3 scripts/update_prometheus_config.py
+          cat generated/prometheus.yml
+
+      - name: Generate Alert Rules
+        run: |
+          cp static/alert.rules.template.yml generated/alert_rules.yml
+          cat generated/alert_rules.yml
+
+      - name: Install Node Exporter
+        run: |
+          yq -r '.[].ip' apps/servers.yaml | while read -r IP; do
+            echo "Installing node exporter on $IP"
+            bash scripts/install_node_exporter.sh $IP private_key.pem || exit 1
+          done
+
+      - name: Upload Prometheus Config
+        run: |
+          echo "📤 Uploading prometheus.yml..."
+          scp -i private_key.pem -o StrictHostKeyChecking=no \
+            generated/prometheus.yml \
+            ubuntu@${{ secrets.PROMETHEUS_EC2_IP }}:/home/ubuntu/prometheus/prometheus.yml
+
+      - name: Upload Alert Rules
+        run: |
+          echo "📤 Uploading alert_rules.yml..."
+          scp -i private_key.pem -o StrictHostKeyChecking=no \
+            generated/alert_rules.yml \
+            ubuntu@${{ secrets.PROMETHEUS_EC2_IP }}:/home/ubuntu/prometheus/alert_rules.yml
+
+      - name: Reload Prometheus
+        run: |
+          echo "🔁 Reloading Prometheus..."
+          curl -X POST http://${{ secrets.PROMETHEUS_EC2_IP }}:9090/-/reload || {
+            echo "Reload failed — fallback to manual restart."
+            exit 1
+          }
